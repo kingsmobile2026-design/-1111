@@ -11,6 +11,33 @@ local TextChatService = game:GetService("TextChatService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+pcall(function()
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 999999
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("PostEffect") then v.Enabled = false end
+    end
+    for _, descendant in ipairs(Workspace:GetDescendants()) do
+        if descendant:IsA("ParticleEmitter") or descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("Fire") or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+            descendant.Enabled = false
+        end
+    end
+    Workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("ParticleEmitter") or descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("Fire") or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+            descendant.Enabled = false
+        end
+    end)
+end)
+
+task.spawn(function()
+    while task.wait(10) do
+        pcall(function()
+            collectgarbage("step", 200)
+        end)
+    end
+end)
 
 local _lp = Players.LocalPlayer
 local localPlayer = _lp
@@ -25,11 +52,12 @@ shared.config = shared.config or {
     spamMessage = "WHITE'S SCRIPT ON",
     spamCount = 5,
     spamDelay = 0.5,
-    typingSpeed = 350
+    typingSpeed = 350,
+    autoFarmMode = "TP"
 }
 local config = shared.config
 local UserRank = "Normal"
-local botAiActive = false
+local botAiActive = true
 local _lt = ""
 local currentTypeSession = 0
 
@@ -37,6 +65,7 @@ local urls = {
     ilikedisui = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
     dictUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/korean%20wordDB.txt",
     dueumUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/dueum_map.json",
+    openingDictUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/opening_dict.json",
     whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8"
 }
 
@@ -409,6 +438,7 @@ local function initializeWindUIWindow()
     local MainTab = Window:Tab({ Title = "Main", Desc = "Main & Word Settings", Icon = "home" })
     local SpamTab = Window:Tab({ Title = "Spam", Desc = "Chat Spammer & Taunt", Icon = "message-square" })
     local OthersTab = Window:Tab({ Title = "Others", Desc = "Auto Farm & Additional Settings", Icon = "plus" })
+    local OtshrsTab = Window:Tab({ Title = "otshrs", Desc = "WinStreak & Optimal Word Finder", Icon = "award" })
     
     MainTab:Paragraph({ Title = "Word Bot & Filters", Desc = "제시어 검색 및 태그 필터 정밀 제어 시스템", Color = Color3.fromRGB(0, 255, 128) })
 
@@ -528,7 +558,6 @@ local function initializeWindUIWindow()
     local searchBoxInput
     local filterDropdownReference
 
-    -- 디바운스 및 렉 방지용 변수
     local lastFilterUpdateTick = 0
     local isFilteringScheduled = false
 
@@ -609,7 +638,7 @@ local function initializeWindUIWindow()
             emptyLabel.Parent = Scroller
             Scroller.CanvasSize = UDim2.new(0, 0, 0, 40)
         else
-            local maxDisplay = math.min(#matched, 25) -- 렌더링 개수를 줄여 UI 렉 대폭 감소
+            local maxDisplay = math.min(#matched, 25)
             for i = 1, maxDisplay do
                 local targetW = matched[i]
                 local wordBtn = Instance.new("TextButton")
@@ -676,20 +705,12 @@ local function initializeWindUIWindow()
         Callback = function(v) config.typingSpeed = v end
     })
 
-    local isBotAiLocked = (UserRank ~= "Premium")
-    local botAiToggle = MainTab:Toggle({
+    MainTab:Toggle({
         Title = "Enable BOT AI (자동 단어 제출)",
-        Desc = "내 턴에 매칭된 단어를 실제 타수 조립 연출로 자동 사격합니다. (프리미엄 전용)",
+        Desc = "내 턴에 매칭된 단어를 실제 타수 조립 연출로 자동 사격합니다.",
         Value = botAiActive,
-        Locked = isBotAiLocked,
         Callback = function(v) 
-            if UserRank ~= "Premium" then 
-                botAiToggle:SetValue(false) 
-                botAiActive = false
-                showPremiumAlert() 
-            else 
-                botAiActive = v 
-            end
+            botAiActive = v 
         end
     })
 
@@ -727,7 +748,7 @@ local function initializeWindUIWindow()
         end
     })
 
-    OthersTab:Paragraph({ Title = "Auto Farm & Anti-Ban Options", Desc = "오토팜 컨트롤 위젯 및 안티밴 시스템 제어", Color = Color3.fromRGB(0, 255, 128) })
+    OthersTab:Paragraph({ Title = "Auto Sit / Farm & Anti-Ban Options", Desc = "자동 앉기 오토팜 및 안티밴 시스템 제어", Color = Color3.fromRGB(0, 255, 128) })
 
     local isAntiBanLocked = (UserRank ~= "Premium")
     local antiBanToggle = OthersTab:Toggle({
@@ -746,6 +767,70 @@ local function initializeWindUIWindow()
         end
     })
 
+    OthersTab:Dropdown({
+        Title = "자동 앉기 이동 방식 선택 (Walk / TP)",
+        Desc = "빈 자리에 찾아갈 때 순간이동(TP)으로 갈지, 걸어가기(Walk)로 갈지 선택합니다.",
+        Values = {"TP", "Walk"},
+        Value = config.autoFarmMode,
+        Multi = false,
+        Callback = function(v)
+            config.autoFarmMode = v
+        end
+    })
+
+    OtshrsTab:Paragraph({ Title = "WinStreak & Health Moniter", Desc = "HealthFrame 이미지 변경 감지 및 연승 자동 보존 시스템", Color = Color3.fromRGB(0, 255, 128) })
+
+    local winStreakLabel = OtshrsTab:Paragraph({
+        Title = "현재 WinStreak: " .. tostring(config.winStreak),
+        Desc = "체력바 이미지 변화 감지 시 연승이 누적/재설정됩니다.",
+        Color = Color3.fromRGB(255, 200, 0)
+    })
+
+    OtshrsTab:Toggle({
+        Title = "오토 세이브 윈스트레이크 (ON/OFF)",
+        Desc = "켜면 체력바 이미지 변화를 감지하여 윈스트레이크가 자동으로 기록 및 보존됩니다.",
+        Value = config.autoSaveEnabled,
+        Callback = function(v)
+            config.autoSaveEnabled = v
+        end
+    })
+
+    OtshrsTab:Button({
+        Title = "WinStreak 수동 초기화",
+        Desc = "저장된 연승(WinStreak) 카운트를 0으로 리셋합니다.",
+        Callback = function()
+            config.winStreak = 0
+        end
+    })
+
+    task.spawn(function()
+        local lastImageId = ""
+        while task.wait(0.5) do
+            pcall(function()
+                if not config.autoSaveEnabled then return end
+                local playerFolder = game.Players:FindFirstChild("qwertyuippasdfghjkk8")
+                if playerFolder then
+                    local pGui = playerFolder:FindFirstChild("PlayerGui")
+                    local gameGui = pGui and pGui:FindFirstChild("GameGui")
+                    local healthFrame = gameGui and gameGui:FindFirstChild("HealthFrame")
+                    local targetImgObj = healthFrame and healthFrame:FindFirstChild("1")
+                    
+                    if targetImgObj and (targetImgObj:IsA("ImageLabel") or targetImgObj:IsA("ImageButton")) then
+                        local currentImg = tostring(targetImgObj.Image)
+                        if currentImg:find("84219129745991") then
+                            lastImageId = "84219129745991"
+                        elseif currentImg:find("71809140042234") then
+                            if lastImageId == "84219129745991" then
+                                config.winStreak = config.winStreak + 1
+                                lastImageId = "71809140042234"
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+
     local autoFarmGui = Instance.new("ScreenGui")
     autoFarmGui.Name = "TableAutoTeleportGui"
     autoFarmGui.ResetOnSpawn = false
@@ -763,7 +848,7 @@ local function initializeWindUIWindow()
     titleLabel.Position = UDim2.new(0, 10, 0, 8)
     titleLabel.Size = UDim2.new(1, -20, 0, 24)
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "오토팜 기능"
+    titleLabel.Text = "자동 앉기 기능"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 14
     titleLabel.Font = Enum.Font.GothamBold
@@ -774,7 +859,7 @@ local function initializeWindUIWindow()
     toggleBtn.Size = UDim2.new(1, -20, 0, 36)
     toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
     toggleBtn.BorderSizePixel = 0
-    toggleBtn.Text = "오토팜 (OFF)"
+    toggleBtn.Text = "자동 앉기 (OFF)"
     toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     toggleBtn.TextSize = 13
     toggleBtn.Font = Enum.Font.GothamBold
@@ -816,7 +901,8 @@ local function initializeWindUIWindow()
         local character = _lp.Character
         if not character then return end
         local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if not rootPart then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not rootPart or not humanoid then return end
 
         local function scanFolder(parentFolder)
             for _, child in ipairs(parentFolder:GetChildren()) do
@@ -841,7 +927,13 @@ local function initializeWindUIWindow()
                         end
                         if not alreadyNear then
                             local targetSeat = emptySeats[1]
-                            rootPart.CFrame = targetSeat.CFrame + Vector3.new(0, 3, 0)
+                            
+                            if config.autoFarmMode == "Walk" then
+                                humanoid:MoveTo(targetSeat.Position)
+                            else
+                                rootPart.CFrame = targetSeat.CFrame + Vector3.new(0, 3, 0)
+                            end
+
                             isTpCoolingDown = true
                             task.delay(TP_COOLDOWN_TIME, function() isTpCoolingDown = false end)
                             return true
@@ -859,41 +951,29 @@ local function initializeWindUIWindow()
         scanFolder(baseFolder)
     end
 
-    local isAutoFarmLocked = (UserRank ~= "Premium")
-    local autoFarmToggleRef = OthersTab:Toggle({
-        Title = "오토팜 윈도우 표시 (ON/OFF)",
-        Desc = "켜면 화면에 오토팜 컨트롤 위젯이 나타나고, 끄면 숨겨집니다. (프리미엄 전용)",
+    OthersTab:Toggle({
+        Title = "자동 앉기 위젯 표시 (ON/OFF)",
+        Desc = "켜면 화면에 자동 앉기 위젯이 나타나고, 끄면 숨겨집니다.",
         Value = false,
-        Locked = isAutoFarmLocked,
         Callback = function(v) 
-            if UserRank ~= "Premium" then
-                autoFarmToggleRef:SetValue(false)
-                autoFarmGui.Enabled = false
-                showPremiumAlert()
-            else
-                autoFarmGui.Enabled = v
-            end
+            autoFarmGui.Enabled = v
         end
     })
 
     toggleBtn.Activated:Connect(function()
-        if UserRank ~= "Premium" then
-            showPremiumAlert()
-            return
-        end
         isAutoTpEnabled = not isAutoTpEnabled
         if isAutoTpEnabled then
             toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 50)
-            toggleBtn.Text = "오토팜 (ON)"
+            toggleBtn.Text = "자동 앉기 (ON)"
         else
             toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-            toggleBtn.Text = "오토팜 (OFF)"
+            toggleBtn.Text = "자동 앉기 (OFF)"
             isTpCoolingDown = false 
         end
     end)
 
     RunService.Heartbeat:Connect(function()
-        if UserRank ~= "Premium" or not autoFarmGui.Enabled or not isAutoTpEnabled then return end
+        if not autoFarmGui.Enabled or not isAutoTpEnabled then return end
         pcall(function() checkAndTeleportAllTables() end)
     end)
 
@@ -916,8 +996,8 @@ local function initializeWindUIWindow()
 
             updateFilteredWordsView()
 
-            if botAiActive and UserRank == "Premium" and gameTextBox then
-                task.wait(math.random(0.4, 0.8))
+            if botAiActive then
+                task.wait(math.random(0.2, 0.4))
                 
                 local tier1 = {}
                 local tier2 = {}
@@ -960,7 +1040,7 @@ local function initializeWindUIWindow()
         end
 
         local lastDetectedLetter = ""
-        while task.wait(0.6) do
+        while task.wait(0.15) do
             pcall(function()
                 local foundLetter = nil
                 local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
@@ -1047,6 +1127,10 @@ local function runLoadingSequence()
     TextProgressBar.Text = "[" .. string.rep(" ", totalLength) .. "]"
 
     local isDataDownloaded = false
+    
+    -- =======================================================================
+    -- [최종 해결책: 난독화 VM Deadlock 방지 및 GUI 강제 활성화 엔진]
+    -- =======================================================================
     task.spawn(function()
         StatusLabel.Text = "Downloading Core Dictionaries..."
         local rawDueum = downloadData(urls.dueumUrl)
@@ -1057,47 +1141,74 @@ local function runLoadingSequence()
             end)
         end
 
-        local raw = downloadData(urls.dictUrl)
-        if raw then
-            StatusLabel.Text = "Parsing Dictionaries (Non-blocking)..."
-            
-            local tempWords = {}
-            for cleanWord in raw:gmatch('["\'](.-)["\']') do
+        local tempWords = {}
+        local function parseAndInsert(rawText)
+            if not rawText then return end
+            for cleanWord in rawText:gmatch('["\'](.-)["\']') do
                 cleanWord = cleanWord:match("^%s*(.-)%s*$")
                 if cleanWord ~= "" and utf8.len(cleanWord) > 1 then 
                     table.insert(tempWords, cleanWord) 
                 end
             end
-            
             if #tempWords == 0 then
-                for line in raw:gmatch("[^\r\n]+") do
+                for line in rawText:gmatch("[^\r\n]+") do
                     local cleaned = line:match("^%s*(.-)%s*$")
-                    cleaned = cleaned:gsub('^["\']', ''):gsub('["\']$', ''):gsub(',$', '')
-                    if cleaned ~= "" and utf8.len(cleaned) > 1 then 
-                        table.insert(tempWords, cleaned) 
+                    if cleaned then
+                        cleaned = cleaned:gsub('^["\']', ''):gsub('["\']$', ''):gsub(',$', '')
+                        cleaned = cleaned:match("^%s*(.-)%s*$")
+                        if cleaned ~= "" and utf8.len(cleaned) > 1 then 
+                            table.insert(tempWords, cleaned) 
+                        end
                     end
                 end
             end
+        end
 
-            -- 청크 크기를 더 잘게 쪼개어 단어 로딩 시 프레임 드랍(렉) 원천 차단
-            local chunkSize = 1000
-            local lastYieldTick = tick()
-            for i = 1, #tempWords, chunkSize do
-                for j = i, math.min(i + chunkSize - 1, #tempWords) do
-                    local w = tempWords[j]
-                    table.insert(WordDB, w)
-                    MainDictMap[w] = true
+        StatusLabel.Text = "Downloading Opening Dict & Main DB..."
+        local rawOpening = downloadData(urls.openingDictUrl)
+        if rawOpening then
+            pcall(function()
+                local decoded = HttpService:JSONDecode(rawOpening)
+                if type(decoded) == "table" then
+                    for _, w in ipairs(decoded) do
+                        if type(w) == "string" then table.insert(tempWords, w) end
+                    end
                 end
-                
-                if tick() - lastYieldTick > 0.01 then
-                    task.wait()
-                    lastYieldTick = tick()
-                end
+            end)
+            if #tempWords == 0 then
+                parseAndInsert(rawOpening)
             end
         end
+
+        local rawMain = downloadData(urls.dictUrl)
+        if rawMain then
+            parseAndInsert(rawMain)
+        end
+
+        StatusLabel.Text = "Parsing & Removing Duplicates..."
         
-        StatusLabel.Text = "Sorting Word Database..."
-        table.sort(WordDB)
+        local rawWordsCount = #tempWords
+        local chunkSize = 50 
+        local lastYieldTime = os.clock()
+        local temporaryMap = {}
+        
+        for i = 1, rawWordsCount, chunkSize do
+            for j = i, math.min(i + chunkSize - 1, rawWordsCount) do
+                local word = tempWords[j]
+                if not temporaryMap[word] then
+                    temporaryMap[word] = true
+                    table.insert(WordDB, word)
+                    MainDictMap[word] = true
+                end
+            end
+            
+            if os.clock() - lastYieldTime > 0.1 then
+                task.wait()
+                lastYieldTime = os.clock()
+            end
+        end
+        temporaryMap = nil
+        
         isDataDownloaded = true
     end)
 
@@ -1108,25 +1219,33 @@ local function runLoadingSequence()
             local filledPart = string.rep("|", currentFilled)
             local emptyPart = string.rep(" ", totalLength - currentFilled)
             TextProgressBar.Text = "[" .. filledPart .. emptyPart .. "]"
-            StatusLabel.Text = "Injecting Typing Automata Node... " .. math.floor((i/totalLength)*100) .. "%"
-            task.wait(0.04)
+            StatusLabel.Text = "Injecting Automata Data... " .. math.floor((i / totalLength) * 100) .. "%"
+            task.wait(0.03) 
         end
-
+        
+        StatusLabel.Text = "Finalizing Graphics Engine..."
         while not isDataDownloaded do
-            task.wait(0.05)
+            task.wait(0.02)
         end
-
+        
+        task.spawn(function()
+            initializeWindUIWindow()
+        end)
+        
+        task.defer(function()
+            table.sort(WordDB)
+        end)
+        
+        task.wait(0.1)
         TweenService:Create(MainBackground, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
         TweenService:Create(TitleLabel, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
         TweenService:Create(TextProgressBar, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
-        local fade = TweenService:Create(StatusLabel, TweenInfo.new(0.2), {TextTransparency = 1})
-        if fade then 
-            fade:Play() 
-            fade.Completed:Wait() 
-        end
-
+        TweenService:Create(StatusLabel, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
+        
+        task.wait(0.3)
         LoadingScreenGui:Destroy()
-        initializeWindUIWindow()
+        
+        collectgarbage("collect")
     end)
 end
 
