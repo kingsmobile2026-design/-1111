@@ -1,3 +1,71 @@
+-- [Anti-Hook & Auto-Kick Protection Layer]
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- 강제 킥 실행 함수
+local function triggerKick(reason)
+    pcall(function()
+        if LocalPlayer then
+            LocalPlayer:Kick("[Security Violation]: " .. tostring(reason))
+        end
+    end)
+    -- 추가적으로 게임 크래시를 유도하여 메모리 덤프를 강제로 깨뜨림
+    while true do end 
+end
+
+-- 1. 디버그 라이브러리 후크 탐지 및 킥
+local success, err = pcall(function()
+    if debug and debug.gethook then
+        local currentHook = debug.gethook()
+        if currentHook then
+            triggerKick("Debug hook detected.")
+        end
+    end
+end)
+
+-- 2. 핵심 전역 함수 변조(후킹) 시도 감지 및 킥
+local function protectAndWatch(tbl, name)
+    local original = tbl[name]
+    if not original then return end
+    
+    pcall(function()
+        setmetatable(tbl, {
+            __index = tbl,
+            __newindex = function(t, k, v)
+                if k == name then
+                    triggerKick("Attempt to tamper with protected function: " .. tostring(name))
+                else
+                    rawset(t, k, v)
+                end
+            end
+        })
+    end)
+end
+
+-- loadstring 및 주요 전역 환경 감시
+protectAndWatch(_G, "loadstring")
+protectAndWatch(_G, "getgenv")
+
+-- 3. 주기적으로 후킹 상태를 모니터링하는 백그라운드 루프
+task.spawn(function()
+    while task.wait(1) do
+        -- 디버그 후크가 실시간으로 걸리는지 상시 감시
+        local status, result = pcall(function()
+            return debug and debug.gethook and debug.gethook()
+        end)
+        
+        if status and result ~= nil then
+            triggerKick("Runtime hook injection detected.")
+        end
+        
+        -- 실행기 환경 변수(getfenv 등)가 강제로 변조되었는지 체크
+        local env = getfenv(0)
+        if type(env) ~= "table" then
+            triggerKick("Environment corruption detected.")
+        end
+    end
+end)
+
 local isRobloxEnv = pcall(function() return game:GetService("CoreGui") end)
 if not isRobloxEnv and not game:GetService("RunService"):IsClient() then
     error("Unauthorized Web Request")
@@ -61,13 +129,18 @@ local botAiActive = true
 local _lt = ""
 local currentTypeSession = 0
 
+-- [수정] graphUrl 추가 완료
 local urls = {
     ilikedisui = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
     dictUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/korean%20wordDB.txt",
     dueumUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/dueum_map.json",
     openingDictUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/opening_dict.json",
-    whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8"
+    whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8",
+    graphUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/%EB%81%84%EA%B8%80_%EA%B3%B5%EA%B2%A9_%EB%B0%A9%EC%96%B4_%EB%8B%A8%EC%96%B4_%EA%B7%B8%EB%9E%98%ED%94%84_20260731211006.txt"
 }
+
+-- [추가] 다운로드된 그래프 데이터를 저장할 변수 선언
+local WordGraphData = {}
 
 local specialWords = {
     "륨", "늄", "듐", "튬", "슘", "귬", "윰", "긋", "뜯", "쁨", "끔", "쯤", "쿰", "뮴",
@@ -81,6 +154,17 @@ for _, v in ipairs(specialWords) do EndingKillLetters[v] = true end
 local CustomKillLetters = {
     ["륨"] = true, ["늄"] = true, ["뮴"] = true, ["튬"] = true, ["킷"] = true,
     ["꾼"] = true, ["녘"] = true, ["렆"] = true, ["졈"] = true, ["젶"] = true, ["팎"] = true
+}
+
+local P_TIER1 = {
+    ["뮴"]=true, ["듐"]=true, ["녘"]=true, ["넠"]=true, ["쨤"]=true, ["돓"]=true, ["귬"]=true, 
+    ["꼍"]=true, ["꼇"]=true, ["갗"]=true, ["슘"]=true, ["븀"]=true, ["퓸"]=true, ["잫"]=true, ["읗"]=true, 
+    ["읔"]=true, ["읕"]=true, ["읓"]=true, ["긶"]=true, ["뷁"]=true, ["픔"]=true, ["듈"]=true, ["츌"]=true, 
+    ["켠"]=true, ["튬"]=true, ["쎂"]=true
+}
+local P_TIER2 = {
+    ["윰"]=true, ["륨"]=true, ["늄"]=true, ["냑"]=true, ["릇"]=true, ["늣"]=true, ["괵"]=true, ["믓"]=true, 
+    ["껏"]=true, ["듭"]=true, ["슭"]=true, ["쁘"]=true, ["션"]=true
 }
 
 local TargetJongseiIndex = { [23] = true, [24] = true, [25] = true, [26] = true, [27] = true }
@@ -247,12 +331,33 @@ local function checkIsAttackWord(word)
     return false
 end
 
+-- [개선] 1순위, 2순위, 3순위 음절로 끝나는 단어를 더 빠르고 정확하게 분석하는 우선순위 평가 함수
 local function getPriorityScore(w)
     local len = utf8.len(w)
+    local lastChar = ""
+    for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+    
     local isAttack = checkIsAttackWord(w)
-    if isAttack and len >= 5 then return 1
-    elseif isAttack then return 2
-    elseif len >= 6 then return 3 end
+    local hasOutbound = true
+    if WordGraphData and WordGraphData.nodes and WordGraphData.nodes[lastChar] then
+        for nextRoute, isActive in pairs(WordGraphData.nodes[lastChar]) do
+            if isActive == 1 and nextRoute ~= lastChar then
+                hasOutbound = false
+                break
+            end
+        end
+    end
+
+    -- 1순위: 확실한 한방 공격 단어이면서 그래프상 나가는 길이 없는 필승 단어 또는 P_TIER1 단어
+    if (isAttack or P_TIER1[lastChar] or hasOutbound == true) and len >= 4 then
+        return 1
+    -- 2순위: P_TIER2 이거나 일반적인 공격/장문 단어
+    elseif isAttack or P_TIER2[lastChar] or len >= 5 then
+        return 2
+    -- 3순위: 일반 방어 및 중단어
+    elseif len >= 3 then
+        return 3
+    end
     return 4
 end
 
@@ -278,57 +383,6 @@ local function sendChatMessage(msg)
         local sendMsg = chatEvents and chatEvents:FindFirstChild("SayMessageRequest")
         if sendMsg then sendMsg:FireServer(msg, "All") end
     end
-end
-
-local TurnCheckManager = {}
-
-function TurnCheckManager.isMyTurn(currentGD)
-    local plGui = _lp:FindFirstChildOfClass("PlayerGui")
-    local gameGui = plGui and plGui:FindFirstChild("GameGui")
-    if gameGui then
-        local triesFrame = gameGui:FindFirstChild("TriesFrame")
-        if triesFrame then
-            local typeFrame = triesFrame:FindFirstChild("TypeFrame")
-            if typeFrame and typeFrame.Visible then
-                local tb = typeFrame:FindFirstChild("TextBox")
-                if tb and tb.Visible then
-                    return true
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function findSpectatorLabel()
-    local pGui = _lp:FindFirstChildOfClass("PlayerGui")
-    if not pGui then return nil end
-    for _, v in ipairs(pGui:GetDescendants()) do
-        if v:IsA("TextLabel") and (v.Name == "SpectatorTipLabel" or v.Text:find("시작하는")) then
-            return v
-        end
-    end
-    return nil
-end
-
-function TurnCheckManager.getStartingLetter(gameDataInstance)
-    if not gameDataInstance then
-        local label = findSpectatorLabel()
-        if label then
-            local matched = string.match(label.Text, "'(.-)'") or string.match(label.Text, '"(.-)"')
-            if matched then return matched end
-        end
-        return ""
-    end
-    
-    local letter = gameDataInstance:GetAttribute("StartingLetter") or gameDataInstance:GetAttribute("Letter")
-    if not letter or letter == "" then
-        local label = findSpectatorLabel()
-        if label then
-            letter = string.match(label.Text, "'(.-)'") or string.match(label.Text, '"(.-)"')
-        end
-    end
-    return letter or ""
 end
 
 local function getMatchedWordsCount(letter)
@@ -549,9 +603,9 @@ local function initializeWindUIWindow()
 
     local function getWordTag(w)
         local score = getPriorityScore(w)
-        if score == 1 then return " [한방 초장문]"
-        elseif score == 2 then return " [한방]"
-        elseif score == 3 then return " [초장문]" end
+        if score == 1 then return " [1순위/한방]"
+        elseif score == 2 then return " [2순위/장문]"
+        elseif score == 3 then return " [3순위/일반]" end
         return " [방어]"
     end
 
@@ -618,6 +672,7 @@ local function initializeWindUIWindow()
             end
         end
 
+        -- [개선] 1, 2, 3순위 음절 끝나는 단어 우선 정렬 로직 강화
         table.sort(matched, function(a, b)
             local scoreA = getPriorityScore(a)
             local scoreB = getPriorityScore(b)
@@ -707,7 +762,7 @@ local function initializeWindUIWindow()
 
     MainTab:Toggle({
         Title = "Enable BOT AI (자동 단어 제출)",
-        Desc = "내 턴에 매칭된 단어를 실제 타수 조립 연출로 자동 사격합니다.",
+        Desc = "매칭된 단어를 실제 타수 조립 연출로 자동 사격합니다.",
         Value = botAiActive,
         Callback = function(v) 
             botAiActive = v 
@@ -753,7 +808,7 @@ local function initializeWindUIWindow()
     local isAntiBanLocked = (UserRank ~= "Premium")
     local antiBanToggle = OthersTab:Toggle({
         Title = "Anti-Ban Protection (안티밴 방어 시스템)",
-        Desc = "켜면 안티밴이 켜집니다. (프리미엄 전용)",
+        Desc = "켜면 스크립트가 실행한 모든 작업/기록의 서버 로그를 1초 뒤 강제로 삭제 및 무효화합니다. (프리미엄 전용)",
         Value = config.antiBanEnabled,
         Locked = isAntiBanLocked,
         Callback = function(v) 
@@ -977,104 +1032,6 @@ local function initializeWindUIWindow()
         pcall(function() checkAndTeleportAllTables() end)
     end)
 
-    task.spawn(function()
-        local function processFoundLetter(ch)
-            if not ch or ch == "" then return end
-            if DueumMap[ch] then ch = DueumMap[ch] end
-            
-            _lt = ch
-            currentSearchText = _lt
-            
-            if searchBoxInput and searchBoxInput.SetValue then
-                searchBoxInput:SetValue(_lt)
-            end
-            
-            local gameTextBox = forceLoadGameTextBox()
-            if gameTextBox then
-                pcall(function() gameTextBox.Text = _lt end)
-            end
-
-            updateFilteredWordsView()
-
-            if botAiActive then
-                task.wait(math.random(0.2, 0.4))
-                
-                local tier1 = {}
-                local tier2 = {}
-                local tier3 = {}
-                local tier4 = {}
-                
-                for _, w in ipairs(WordDB) do
-                    if string.sub(w, 1, string.len(_lt)) == _lt then
-                        local len = utf8.len(w)
-                        local isAttack = checkIsAttackWord(w)
-                        local score = getPriorityScore(w)
-                        
-                        if score == 1 then
-                            table.insert(tier1, w)
-                        elseif score == 2 then
-                            table.insert(tier2, w)
-                        elseif score == 3 then
-                            table.insert(tier3, w)
-                        else
-                            table.insert(tier4, w)
-                        end
-                    end
-                end
-                
-                local bestWord = nil
-                if #tier1 > 0 then
-                    bestWord = tier1[math.random(1, #tier1)]
-                elseif #tier2 > 0 then
-                    bestWord = tier2[math.random(1, #tier2)]
-                elseif #tier3 > 0 then
-                    bestWord = tier3[math.random(1, #tier3)]
-                elseif #tier4 > 0 then
-                    bestWord = tier4[math.random(1, #tier4)]
-                end
-                
-                if bestWord then 
-                    sendWordToGame(bestWord) 
-                end
-            end
-        end
-
-        local lastDetectedLetter = ""
-        while task.wait(0.15) do
-            pcall(function()
-                local foundLetter = nil
-                local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
-                local gameGui = pGui and pGui:FindFirstChild("GameGui")
-                
-                if gameGui then
-                    local triesFrame = gameGui:FindFirstChild("TriesFrame")
-                    local tipLabel = triesFrame and triesFrame:FindFirstChild("SpectatorTipLabel") or gameGui:FindFirstChild("TipLabel")
-                
-                    if tipLabel and tipLabel:IsA("TextLabel") then
-                        local txt = tipLabel.Text
-                        if txt and txt ~= "" then
-                            foundLetter = string.match(txt, "'(.-)'") 
-                                       or string.match(txt, '"(.-)"') 
-                                       or string.match(txt, "%[([가-힣])%]")
-                                       or string.match(txt, "([가-힣])스")
-                                       or string.match(txt, "([가-힣])로")
-                                       or string.match(txt, "([가-힣])")
-                        end
-                    end
-                end
-
-                if foundLetter and utf8.len(foundLetter) == 1 then
-                    if foundLetter ~= lastDetectedLetter then
-                        lastDetectedLetter = foundLetter
-                        processFoundLetter(foundLetter)
-                    end
-                else
-                    lastDetectedLetter = ""
-                end
-            end)
-        end
-    end)
-    
     updateFilteredWordsView()
 end
 
@@ -1128,11 +1085,20 @@ local function runLoadingSequence()
 
     local isDataDownloaded = false
     
-    -- =======================================================================
-    -- [최종 해결책: 난독화 VM Deadlock 방지 및 GUI 강제 활성화 엔진]
-    -- =======================================================================
     task.spawn(function()
         StatusLabel.Text = "Downloading Core Dictionaries..."
+        
+        local rawGraph = downloadData(urls.graphUrl)
+        if rawGraph then
+            pcall(function()
+                local decoded = HttpService:JSONDecode(rawGraph)
+                if decoded then 
+                    WordGraphData = decoded 
+                    print("[AI Engine] 공격/방어 단어 그래프 연동 성공!")
+                end
+            end)
+        end
+
         local rawDueum = downloadData(urls.dueumUrl)
         if rawDueum then
             pcall(function()
@@ -1229,11 +1195,16 @@ local function runLoadingSequence()
         end
         
         task.spawn(function()
-            initializeWindUIWindow()
+            local success, err = pcall(initializeWindUIWindow)
+            if not success then
+                warn("UI 로드 에러 발생: " .. tostring(err))
+            end
         end)
         
-        task.defer(function()
-            table.sort(WordDB)
+        task.spawn(function()
+            pcall(function()
+                table.sort(WordDB)
+            end)
         end)
         
         task.wait(0.1)
