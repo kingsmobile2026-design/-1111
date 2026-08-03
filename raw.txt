@@ -1,5 +1,68 @@
-
+-- [Anti-Hook & Auto-Kick Protection Layer]
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- 강제 킥 실행 함수
+local function triggerKick(reason)
+pcall(function()
+if LocalPlayer then
+LocalPlayer:Kick("[Security Violation]: " .. tostring(reason))
+end
+end)
+-- 추가적으로 게임 크래시를 유도하여 메모리 덤프를 강제로 깨뜨림
+while true do end
+end
+
+-- 1. 디버그 라이브러리 후크 탐지 및 킥
+local success, err = pcall(function()
+if debug and debug.gethook then
+local currentHook = debug.gethook()
+if currentHook then
+triggerKick("Debug hook detected.")
+end
+end
+end)
+
+-- 2. 핵심 전역 함수 변조(후킹) 시도 감지 및 킥
+local function protectAndWatch(tbl, name)
+local original = tbl[name]
+if not original then return end
+
+pcall(function()
+setmetatable(tbl, {
+__index = tbl,
+__newindex = function(t, k, v)
+if k == name then
+triggerKick("Attempt to tamper with protected function: " .. tostring(name))
+else
+rawset(t, k, v)
+end
+end
+})
+end)
+end
+
+-- loadstring 및 주요 전역 환경 감시
+protectAndWatch(_G, "loadstring")
+protectAndWatch(_G, "getgenv")
+
+-- 3. 주기적으로 후킹 상태를 모니터링하는 백그라운드 루프
+task.spawn(function()
+while task.wait(1) do
+-- 디버그 후크 재검사
+pcall(function()
+if debug and debug.gethook and debug.gethook() then
+triggerKick("Runtime debug hook detected.")
+end
+end)
+end
+end)
+
+local isRobloxEnv = pcall(function() return game:GetService("CoreGui") end)
+if not isRobloxEnv and not game:GetService("RunService"):IsClient() then
+    error("Unauthorized Web Request")
+end
+
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
@@ -57,33 +120,18 @@ local botAiActive = true
 local _lt = ""
 local currentTypeSession = 0
 
--- [수정] graphUrl 추가 완료
 local urls = {
     ilikedisui = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
-    dictUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/korean%20wordDB.txt",
+    dictUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/-1111/refs/heads/main/Words",
     dueumUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/dueum_map.json",
     openingDictUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/opening_dict.json",
     whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8",
     graphUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/%EB%81%84%EA%B8%80_%EA%B3%B5%EA%B2%A9_%EB%B0%A9%EC%96%B4_%EB%8B%A8%EC%96%B4_%EA%B7%B8%EB%9E%98%ED%94%84_20260731211006.txt"
 }
 
--- [추가] 다운로드된 그래프 데이터를 저장할 변수 선언
 local WordGraphData = {}
 
-local specialWords = {
-    "륨", "늄", "듐", "튬", "슘", "귬", "윰", "긋", "뜯", "쁨", "끔", "쯤", "쿰", "뮴",
-    "펌", "폼", "푼", "빔", "밈", "짐", "릭", "픽", "닉", "킥", "벡", "택", "렉", "큭",
-    "쿡", "툭", "잼", "젬", "짬", "렁", "룽", "융", "꾹", "즉", "쾅", "퓸", "븀",
-    "톤", "쨤", "윕", "녘", "쨔", "긶", "돓", "듸"
-}
-local EndingKillLetters = {}
-for _, v in ipairs(specialWords) do EndingKillLetters[v] = true end
-
-local CustomKillLetters = {
-    ["륨"] = true, ["늄"] = true, ["뮴"] = true, ["튬"] = true, ["킷"] = true,
-    ["꾼"] = true, ["녘"] = true, ["렆"] = true, ["졈"] = true, ["젶"] = true, ["팎"] = true
-}
-
+-- P_TIER 순위
 local P_TIER1 = {
     ["뮴"]=true, ["듐"]=true, ["녘"]=true, ["넠"]=true, ["쨤"]=true, ["돓"]=true, ["귬"]=true, 
     ["꼍"]=true, ["꼇"]=true, ["갗"]=true, ["슘"]=true, ["븀"]=true, ["퓸"]=true, ["잫"]=true, ["읗"]=true, 
@@ -93,6 +141,10 @@ local P_TIER1 = {
 local P_TIER2 = {
     ["윰"]=true, ["륨"]=true, ["늄"]=true, ["냑"]=true, ["릇"]=true, ["늣"]=true, ["괵"]=true, ["믓"]=true, 
     ["껏"]=true, ["듭"]=true, ["슭"]=true, ["쁘"]=true, ["션"]=true
+}
+local P_TIER3 = {
+    ["뭄"]=true, ["값"]=true, ["꾼"]=true, ["듸"]=true, ["픠"]=true, ["븨"]=true, ["좆"]=true, ["꼉"]=true, 
+    ["윕"]=true, ["츠"]=true, ["좋"]=true, ["긋"]=true, ["굿"]=true, ["죤"]=true, ["썹"]=true
 }
 
 local TargetJongseiIndex = { [23] = true, [24] = true, [25] = true, [26] = true, [27] = true }
@@ -244,49 +296,178 @@ local function forceLoadGameTextBox()
     return nil
 end
 
-local function checkIsAttackWord(word)
-    local lastChar = ""
-    for _, cp in utf8.codes(word) do lastChar = utf8.char(cp) end
-    if EndingKillLetters[lastChar] or CustomKillLetters[lastChar] then return true end
-    local cp = utf8.codepoint(lastChar)
-    if cp and cp >= SBASE and cp < SBASE + SCOUNT then
-        local s = cp - SBASE
-        local choIdx = math.floor(s / NCOUNT)
-        local jongIdx = s % TCOUNT
-        if TargetJongseiIndex[jongIdx] or DoubleJongseiIndex[jongIdx] then return true end
-        if DoubleChoseongIndex[choIdx] then return true end
+local function isMyTurn()
+    local targetBox = forceLoadGameTextBox()
+    if targetBox and targetBox.Visible then
+        if targetBox.Parent and targetBox.Parent:IsA("GuiObject") and targetBox.Parent.Visible then
+            return true
+        end
     end
     return false
 end
 
--- [개선] 1순위, 2순위, 3순위 음절로 끝나는 단어를 더 빠르고 정확하게 분석하는 우선순위 평가 함수
-local function getPriorityScore(w)
-    local len = utf8.len(w)
+local function isFirstTurn()
+    if not isMyTurn() then
+        return false
+    end
+    
+    local success, result = pcall(function()
+        local label = game.Players.qwertyuippasdfghjkk.PlayerGui.GameGui.TriesFrame.TypeFrame.ResultLabel
+        if label and label:IsA("TextLabel") then
+            return label.Text
+        end
+    end)
+    
+    if success and result then
+        if string.find(result, "첫 턴에는 사용할수 없는 단어입니다") then
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function checkIsAttackWord(w)
     local lastChar = ""
     for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
     
+    local cp = utf8.codepoint(lastChar)
+    if not cp or cp < SBASE or cp >= SBASE + SCOUNT then return false end
+    
+    local s = cp - SBASE
+    local jongIdx = s % TCOUNT
+    
+    local validJong = {
+        [16] = true, -- ㅁ
+        [25] = true, -- ㅌ
+        [24] = true, -- ㅊ
+        [23] = true, -- ㅋ
+        [27] = true, -- ㅎ
+        [22] = true  -- ㅈ
+    }
+    
+    if validJong[jongIdx] then
+        return true
+    end
+    
+    return false
+end
+
+local function checkIsPTier1AttackWord(w)
+    local lastChar = ""
+    for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+    if P_TIER1[lastChar] then
+        return true
+    end
+    return checkIsAttackWord(w)
+end
+
+local function getPriorityScore(w)
+    local len = utf8.len(w)
     local isAttack = checkIsAttackWord(w)
-    local hasOutbound = true
-    if WordGraphData and WordGraphData.nodes and WordGraphData.nodes[lastChar] then
-        for nextRoute, isActive in pairs(WordGraphData.nodes[lastChar]) do
-            if isActive == 1 and nextRoute ~= lastChar then
-                hasOutbound = false
-                break
+    local isSuperLong = (len >= 6)
+    local isSuperLongAttack = (isAttack and len >= 4)
+    
+    local lastChar = ""
+    for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+    local isLoopAttack = (P_TIER2[lastChar] or P_TIER3[lastChar])
+
+    if isSuperLongAttack then
+        return 1
+    elseif isAttack then
+        return 2
+    elseif isLoopAttack then
+        return 3
+    elseif isSuperLong then
+        return 4
+    else
+        return 5
+    end
+end
+
+local function isExcludedEndingWord(w)
+    local lastChar = ""
+    for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+    
+    if lastChar == "발" or lastChar == "레" or lastChar == "뼈" or lastChar == "산" then
+        return true
+    end
+    
+    local cp = utf8.codepoint(lastChar)
+    if cp and cp >= SBASE and cp < SBASE + SCOUNT then
+        local s = cp - SBASE
+        local jungIdx = math.floor((s % NCOUNT) / TCOUNT)
+        local jongIdx = s % TCOUNT
+        
+        if jongIdx == 0 and (jungIdx == 0 or jungIdx == 20) then
+            return true
+        end
+    end
+    return false
+end
+
+local function getBotSelectedWord(matchedList)
+    if isFirstTurn() then
+        local firstTurnAllowedEndings = {
+            ["듬"] = true, ["빔"] = true, ["슴"] = true, ["듁"] = true, ["랒"] = true,
+            ["른"] = true, ["쨈"] = true, ["넷"] = true, ["즙"] = true, ["뭇"] = true
+        }
+        
+        for _, w in ipairs(matchedList) do
+            local lastChar = ""
+            for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+            if firstTurnAllowedEndings[lastChar] then
+                return w
             end
         end
     end
 
-    -- 1순위: 확실한 한방 공격 단어이면서 그래프상 나가는 길이 없는 필승 단어 또는 P_TIER1 단어
-    if (isAttack or P_TIER1[lastChar] or hasOutbound == true) and len >= 4 then
-        return 1
-    -- 2순위: P_TIER2 이거나 일반적인 공격/장문 단어
-    elseif isAttack or P_TIER2[lastChar] or len >= 5 then
-        return 2
-    -- 3순위: 일반 방어 및 중단어
-    elseif len >= 3 then
-        return 3
+    for _, w in ipairs(matchedList) do
+        local lastChar = ""
+        for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+        if P_TIER1[lastChar] then
+            return w
+        end
     end
-    return 4
+
+    for _, w in ipairs(matchedList) do
+        local lastChar = ""
+        for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+        if P_TIER2[lastChar] then
+            return w
+        end
+    end
+
+    for _, w in ipairs(matchedList) do
+        local lastChar = ""
+        for _, cp in utf8.codes(w) do lastChar = utf8.char(cp) end
+        if P_TIER3[lastChar] then
+            return w
+        end
+    end
+
+    local tierMatched = {}
+    for _, w in ipairs(matchedList) do
+        if not isExcludedEndingWord(w) then
+            table.insert(tierMatched, w)
+        end
+    end
+
+    if #tierMatched > 0 then
+        table.sort(tierMatched, function(a, b)
+            local scoreA = getPriorityScore(a)
+            local scoreB = getPriorityScore(b)
+            if scoreA ~= scoreB then return scoreA < scoreB end
+            return utf8.len(b) < utf8.len(a)
+        end)
+        return tierMatched[1]
+    end
+
+    if #matchedList > 0 then
+        return matchedList[1]
+    end
+
+    return nil
 end
 
 local function sendChatMessage(msg)
@@ -313,31 +494,10 @@ local function sendChatMessage(msg)
     end
 end
 
-local function getMatchedWordsCount(letter)
-    if not letter or letter == "" then return 0 end
-    local count = 0
-    for _, w in ipairs(WordDB) do
-        if string.sub(w, 1, string.len(letter)) == letter then
-            local isPass = false
-            local len = utf8.len(w)
-            local isAttack = checkIsAttackWord(w)
-            
-            if config.selectedFilterType == "전체" then isPass = true
-            elseif config.selectedFilterType == "한방단어" and isAttack then isPass = true
-            elseif config.selectedFilterType == "초장문" and len >= 6 then isPass = true
-            elseif config.selectedFilterType == "한방 초장문" and (isAttack and len >= 5) then isPass = true
-            elseif config.selectedFilterType == "방어단어" and (MainDictMap[w] and not isAttack) then isPass = true end
-            
-            if isPass then count = count + 1 end
-        end
-    end
-    return count
-end
-
 local function sendWordToGame(word)
     if word == "" then return end
     local targetBox = forceLoadGameTextBox()
-    if not targetBox then return end
+    if not targetBox or not targetBox.Visible then return end
     
     currentTypeSession = currentTypeSession + 1
     local mySession = currentTypeSession
@@ -425,6 +585,7 @@ local function initializeWindUIWindow()
     MainTab:Paragraph({ Title = "Word Bot & Filters", Desc = "제시어 검색 및 태그 필터 정밀 제어 시스템", Color = Color3.fromRGB(0, 255, 128) })
 
     local currentSearchText = ""
+    local updateFilteredWordsViewRef = nil
 
     local WordListGui = Instance.new("ScreenGui")
     WordListGui.Name = "WHITE'S_SCRIPT_IndependentWordWindow"
@@ -434,7 +595,7 @@ local function initializeWindUIWindow()
 
     local DragFrame = Instance.new("Frame")
     DragFrame.Name = "DragFrame"
-    DragFrame.Size = UDim2.new(0, 420, 0, 220)
+    DragFrame.Size = UDim2.new(0, 420, 0, 245)
     DragFrame.Position = UDim2.new(0.65, 0, 0.55, 0)
     DragFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     DragFrame.BorderSizePixel = 0
@@ -515,7 +676,7 @@ local function initializeWindUIWindow()
     FilterLabel.Parent = DragFrame
 
     local Scroller = Instance.new("ScrollingFrame")
-    Scroller.Size = UDim2.new(1, -24, 1, -75)
+    Scroller.Size = UDim2.new(1, -24, 1, -95)
     Scroller.Position = UDim2.new(0, 12, 0, 65)
     Scroller.BackgroundTransparency = 1
     Scroller.BorderSizePixel = 0
@@ -529,11 +690,24 @@ local function initializeWindUIWindow()
     UIListLayout.Padding = UDim.new(0, 4)
     UIListLayout.Parent = Scroller
 
+    local NoticeLabel = Instance.new("TextLabel")
+    NoticeLabel.Size = UDim2.new(1, -24, 0, 20)
+    NoticeLabel.Position = UDim2.new(0, 12, 1, -22)
+    NoticeLabel.BackgroundTransparency = 1
+    NoticeLabel.Text = ""
+    NoticeLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+    NoticeLabel.Font = Enum.Font.GothamBold
+    NoticeLabel.TextSize = 11
+    NoticeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    NoticeLabel.Visible = false
+    NoticeLabel.Parent = DragFrame
+
     local function getWordTag(w)
         local score = getPriorityScore(w)
-        if score == 1 then return " [1순위/한방]"
-        elseif score == 2 then return " [2순위/장문]"
-        elseif score == 3 then return " [3순위/일반]" end
+        if score == 1 then return " [1순위/초장문한방]"
+        elseif score == 2 then return " [2순위/한방]"
+        elseif score == 3 then return " [3순위/루프한방]"
+        elseif score == 4 then return " [4순위/초장문]" end
         return " [방어]"
     end
 
@@ -542,6 +716,10 @@ local function initializeWindUIWindow()
 
     local lastFilterUpdateTick = 0
     local isFilteringScheduled = false
+
+    local lastRandomizedSearchText = ""
+    local cachedVisibleIndicesMap = {}
+    local cachedHiddenCount = 0
 
     local function updateFilteredWordsView()
         local currentTick = os.clock()
@@ -570,6 +748,7 @@ local function initializeWindUIWindow()
 
         if currentSearchText == "" then
             FilterLabel.Text = "적용 필터: " .. config.selectedFilterType .. " | 매칭: 0개"
+            NoticeLabel.Visible = false
             local hint = Instance.new("TextLabel")
             hint.Size = UDim2.new(1, 0, 0, 30)
             hint.BackgroundTransparency = 1
@@ -589,18 +768,19 @@ local function initializeWindUIWindow()
                 local isPass = false
                 local len = utf8.len(w)
                 local isAttack = checkIsAttackWord(w)
+                local isSuperLong = (len >= 6)
+                local isSuperLongAttack = (isAttack and len >= 4)
                 
                 if config.selectedFilterType == "전체" then isPass = true
                 elseif config.selectedFilterType == "한방단어" and isAttack then isPass = true
-                elseif config.selectedFilterType == "초장문" and len >= 6 then isPass = true
-                elseif config.selectedFilterType == "한방 초장문" and (isAttack and len >= 5) then isPass = true
+                elseif config.selectedFilterType == "초장문" and isSuperLong then isPass = true
+                elseif config.selectedFilterType == "한방 초장문" and isSuperLongAttack then isPass = true
                 elseif config.selectedFilterType == "방어단어" and (MainDictMap[w] and not isAttack) then isPass = true end
                 
                 if isPass then table.insert(matched, w) end
             end
         end
 
-        -- [개선] 1, 2, 3순위 음절 끝나는 단어 우선 정렬 로직 강화
         table.sort(matched, function(a, b)
             local scoreA = getPriorityScore(a)
             local scoreB = getPriorityScore(b)
@@ -611,6 +791,7 @@ local function initializeWindUIWindow()
         FilterLabel.Text = "적용 필터: " .. config.selectedFilterType .. " | 매칭: " .. #matched .. "개"
 
         if #matched == 0 then
+            NoticeLabel.Visible = false
             local emptyLabel = Instance.new("TextLabel")
             emptyLabel.Size = UDim2.new(1, 0, 0, 30)
             emptyLabel.BackgroundTransparency = 1
@@ -621,9 +802,54 @@ local function initializeWindUIWindow()
             emptyLabel.Parent = Scroller
             Scroller.CanvasSize = UDim2.new(0, 0, 0, 40)
         else
-            local maxDisplay = math.min(#matched, 25)
+            local totalMatchedCount = #matched
+            local displayMatched = matched
+            local hiddenCount = 0
+
+            if UserRank ~= "Premium" and totalMatchedCount > 5 then
+                if currentSearchText ~= lastRandomizedSearchText then
+                    lastRandomizedSearchText = currentSearchText
+                    cachedVisibleIndicesMap = {}
+                    
+                    local limitCount = math.max(1, math.floor(totalMatchedCount * 0.5))
+                    cachedHiddenCount = totalMatchedCount - limitCount
+                    
+                    math.randomseed(os.clock() * 10000 + #matched)
+                    local indices = {}
+                    for i = 1, totalMatchedCount do table.insert(indices, i) end
+                    for i = #indices, 2, -1 do
+                        local j = math.random(i)
+                        indices[i], indices[j] = indices[j], indices[i]
+                    end
+                    
+                    for i = 1, limitCount do
+                        cachedVisibleIndicesMap[indices[i]] = true
+                    end
+                end
+
+                hiddenCount = cachedHiddenCount
+                displayMatched = {}
+                for i = 1, totalMatchedCount do
+                    if cachedVisibleIndicesMap[i] then
+                        table.insert(displayMatched, matched[i])
+                    end
+                end
+            else
+                if currentSearchText ~= lastRandomizedSearchText then
+                    lastRandomizedSearchText = currentSearchText
+                end
+            end
+
+            if hiddenCount > 0 then
+                NoticeLabel.Text = "🔐 더 보려면 프리미엄 필요 (" .. hiddenCount .. "개 가려짐)"
+                NoticeLabel.Visible = true
+            else
+                NoticeLabel.Visible = false
+            end
+
+            local maxDisplay = math.min(#displayMatched, 25)
             for i = 1, maxDisplay do
-                local targetW = matched[i]
+                local targetW = displayMatched[i]
                 local wordBtn = Instance.new("TextButton")
                 wordBtn.Size = UDim2.new(1, 0, 0, 24)
                 wordBtn.BackgroundTransparency = 1
@@ -644,6 +870,8 @@ local function initializeWindUIWindow()
             Scroller.CanvasSize = UDim2.new(0, 0, 0, maxDisplay * 28)
         end
     end
+
+    updateFilteredWordsViewRef = updateFilteredWordsView
 
     searchBoxInput = MainTab:Input({ 
         Title = "Search Word (제시어 검색)", 
@@ -690,12 +918,97 @@ local function initializeWindUIWindow()
 
     MainTab:Toggle({
         Title = "Enable BOT AI (자동 단어 제출)",
-        Desc = "매칭된 단어를 실제 타수 조립 연출로 자동 사격합니다.",
+        Desc = "매칭된 단어를 실제 타수 조립 연출로 지속적으로 자동 사격합니다.",
         Value = botAiActive,
         Callback = function(v) 
             botAiActive = v 
         end
     })
+
+    task.spawn(function()
+        local function findSpectatorLabel()
+            local pGui = _lp:FindFirstChildOfClass("PlayerGui")
+            if not pGui then return nil end
+            for _, v in ipairs(pGui:GetDescendants()) do
+                if v:IsA("TextLabel") and (v.Name == "SpectatorTipLabel" or v.Text:find("시작하는")) then
+                    return v
+                end
+            end
+            return nil
+        end
+
+        local function findTurnTime()
+            local pGui = _lp:FindFirstChildOfClass("PlayerGui")
+            if not pGui then return "" end
+            for _, v in ipairs(pGui:GetDescendants()) do
+                if v:IsA("TextLabel" ) and v.Name == "TimeLabel" then
+                    return v.Text
+                end
+            end
+            return ""
+        end
+
+        local _lt = ""
+        local lastAutoInputWord = ""
+        while task.wait(0.15) do
+            local targetLabel = findSpectatorLabel()
+            local currentTime = findTurnTime()
+
+            if not targetLabel then
+                continue
+            end
+
+            local text = targetLabel.Text
+            local ch = ""
+            pcall(function() ch = string.match(text, "'(.-)'") or string.match(text, '"(.-)"') end)
+
+            if ch and ch ~= "" then
+                if ch ~= _lt then
+                    _lt = ch
+                    lastAutoInputWord = ""
+                    
+                    currentSearchText = _lt
+                    if searchBoxInput and searchBoxInput.SetValue then
+                        pcall(function() searchBoxInput:SetValue(_lt) end)
+                    end
+                    
+                    if updateFilteredWordsViewRef then
+                        pcall(updateFilteredWordsViewRef)
+                    end
+                end
+
+                if botAiActive and isMyTurn() then
+                    task.spawn(function()
+                        local matchedWords = {}
+                        local searchLen = string.len(_lt)
+                        for _, w in ipairs(WordDB) do
+                            if string.sub(w, 1, searchLen) == _lt then
+                                local isPass = false
+                                local len = utf8.len(w)
+                                local isAttack = checkIsAttackWord(w)
+                                local isSuperLong = (len >= 6)
+                                local isSuperLongAttack = (isAttack and len >= 4)
+                                
+                                if config.selectedFilterType == "전체" then isPass = true
+                                elseif config.selectedFilterType == "한방단어" and isAttack then isPass = true
+                                elseif config.selectedFilterType == "초장문" and isSuperLong then isPass = true
+                                elseif config.selectedFilterType == "한방 초장문" and isSuperLongAttack then isPass = true
+                                elseif config.selectedFilterType == "방어단어" and (MainDictMap[w] and not isAttack) then isPass = true end
+                                
+                                if isPass then table.insert(matchedWords, w) end
+                            end
+                        end
+
+                        local bestWord = getBotSelectedWord(matchedWords)
+                        if bestWord and bestWord ~= lastAutoInputWord then
+                            lastAutoInputWord = bestWord
+                            sendWordToGame(bestWord)
+                        end
+                    end)
+                end
+            end
+        end
+    end)
 
     SpamTab:Paragraph({ Title = "Chat Spammer Engine", Desc = "인게임 전체 유저 대상 도배 및 무작위 도발 컨트롤러", Color = Color3.fromRGB(0, 255, 128) })
 
@@ -736,7 +1049,7 @@ local function initializeWindUIWindow()
     local isAntiBanLocked = (UserRank ~= "Premium")
     local antiBanToggle = OthersTab:Toggle({
         Title = "Anti-Ban Protection (안티밴 방어 시스템)",
-        Desc = "켜면 스크립트가 실행한 모든 작업/기록의 서버 로그를 1초 뒤 강제로 삭제 및 무효화합니다. (프리미엄 전용)",
+        Desc = "켜면 안티밴이켜집니다 안티치트 우회. (프리미엄 전용)",
         Value = config.antiBanEnabled,
         Locked = isAntiBanLocked,
         Callback = function(v) 
@@ -787,25 +1100,25 @@ local function initializeWindUIWindow()
     })
 
     task.spawn(function()
-        local lastImageId = ""
-        while task.wait(0.5) do
+        local previousImage = nil
+        while task.wait(0.3) do
             pcall(function()
                 if not config.autoSaveEnabled then return end
-                local playerFolder = game.Players:FindFirstChild("qwertyuippasdfghjkk8")
-                if playerFolder then
-                    local pGui = playerFolder:FindFirstChild("PlayerGui")
-                    local gameGui = pGui and pGui:FindFirstChild("GameGui")
-                    local healthFrame = gameGui and gameGui:FindFirstChild("HealthFrame")
-                    local targetImgObj = healthFrame and healthFrame:FindFirstChild("1")
+                
+                local targetImgObj = game.Players.qwertyuippasdfghjkk.PlayerGui.GameGui.HealthFrame:FindFirstChild("2")
+                if targetImgObj and (targetImgObj:IsA("ImageLabel") or targetImgObj:IsA("ImageButton")) then
+                    local currentImg = tostring(targetImgObj.Image)
                     
-                    if targetImgObj and (targetImgObj:IsA("ImageLabel") or targetImgObj:IsA("ImageButton")) then
-                        local currentImg = tostring(targetImgObj.Image)
-                        if currentImg:find("84219129745991") then
-                            lastImageId = "84219129745991"
-                        elseif currentImg:find("71809140042234") then
-                            if lastImageId == "84219129745991" then
-                                config.winStreak = config.winStreak + 1
-                                lastImageId = "71809140042234"
+                    if previousImage == nil then
+                        previousImage = currentImg
+                    elseif currentImg ~= previousImage then
+                        previousImage = currentImg
+                        
+                        local character = _lp.Character
+                        if character then
+                            local humanoid = character:FindFirstChildOfClass("Humanoid")
+                            if humanoid then
+                                humanoid.Health = 0
                             end
                         end
                     end
@@ -831,7 +1144,7 @@ local function initializeWindUIWindow()
     titleLabel.Position = UDim2.new(0, 10, 0, 8)
     titleLabel.Size = UDim2.new(1, -20, 0, 24)
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "자동 앉기 기능"
+    titleLabel.Text = "자동 앉기 툴"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 14
     titleLabel.Font = Enum.Font.GothamBold
@@ -1022,7 +1335,6 @@ local function runLoadingSequence()
                 local decoded = HttpService:JSONDecode(rawGraph)
                 if decoded then 
                     WordGraphData = decoded 
-                    print("[AI Engine] 공격/방어 단어 그래프 연동 성공!")
                 end
             end)
         end
@@ -1125,7 +1437,7 @@ local function runLoadingSequence()
         task.spawn(function()
             local success, err = pcall(initializeWindUIWindow)
             if not success then
-                warn("UI 로드 에러 발생: " .. tostring(err))
+                warn("UI 로드 에러 발생: " + tostring(err))
             end
         end)
         
@@ -1136,6 +1448,11 @@ local function runLoadingSequence()
         end)
         
         task.wait(0.1)
+        
+        -- [오류 수정 부분]: 로딩 화면이 마우스 및 모바일 터치 입력을 계속 가로채지 못하도록 닿는 모든 요소에 Active = false 및 터치 이벤트 해제 처리 추가
+        MainBackground.Active = false
+        CenterContainer.Active = false
+
         TweenService:Create(MainBackground, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
         TweenService:Create(TitleLabel, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
         TweenService:Create(TextProgressBar, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
